@@ -1,0 +1,41 @@
+name: job-watch
+
+on:
+  schedule:
+    # every 6 hours: 00,06,12,18 UTC
+    - cron: "0 0,6,12,18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: job-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run job watch
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          WATCH_TO: ${{ secrets.WATCH_TO }}
+          WATCH_FROM: ${{ secrets.WATCH_FROM }}
+        run: python watch.py
+
+      - name: Commit seen-state
+        run: |
+          git config user.name  "job-watch"
+          git config user.email "job-watch@users.noreply.github.com"
+          git add state/seen.json
+          git diff --staged --quiet || git commit -m "watch: seen-state $(date -u +%FT%TZ)"
+          git push
