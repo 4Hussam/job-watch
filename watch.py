@@ -9,6 +9,7 @@ Pure stdlib on purpose: no pip install, no requirements.txt to rot.
 import json
 import os
 import re
+import imaplib
 import smtplib
 import ssl
 import sys
@@ -17,6 +18,7 @@ import urllib.error
 import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
+from email.header import decode_header, make_header
 from pathlib import Path
 
 STATE = Path(__file__).parent / "state"
@@ -305,6 +307,69 @@ def pull(board, url):
     return pull_rss(board, url) if board in RSS_BOARDS else pull_json(board, url)
 
 
+# Only real recruiter / employer / application traffic is worth his attention.
+# Automated mail is filtered out regardless of subject, or the digest fills up
+# with security notices and newsletters.
+MAILWATCH = re.compile(
+    r"(recruit|recruiter|recruitment|talent acquisition|talent partner|"
+    r"hiring manager|head of (?:engineering|development|it)|"
+    r"careers?\b|career[s]?@|job[s]?@|hr@|people@|"
+    r"interview|your application|application (?:received|status|update)|"
+    r"we(?:'ve| have) (?:received|reviewed)|"
+    r"offer (?:letter|extended)|next steps|assessment|"
+    r"foras\.ps|tapcareers|gazatalents|skillbridge|forlanso)",
+    re.I,
+)
+
+MAILIGNORE = re.compile(
+    r"(no-?reply|noreply|mailer-daemon|donotreply|notifications@|"
+    r"accounts\.google|github\.com|linkedin|dub\.ai|newsletter|"
+    r"unsubscribe|marketing|promotion|sales@|billing|security alert|"
+    r"calendar-invitation|facebook|instagram|twitter|x\.com)",
+    re.I,
+)
+
+
+def inbox_new():
+    """Unread inbox headers worth showing. Never auto-replies, never marks read."""
+    if not GMAIL_PASS:
+        return []
+    out = []
+    try:
+        with imaplib.IMAP4_SSL("imap.gmail.com", 993) as M:
+            M.login(GMAIL_USER, GMAIL_PASS)
+            M.select("INBOX")
+            typ, data = M.search(None, "UNSEEN")
+            if typ != "OK":
+                return []
+            for num in reversed(data[0].split()[-40:]):
+                typ, msg = M.fetch(
+                    num, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                if typ != "OK":
+                    continue
+                head = msg[0][1].decode("utf-8", "replace")
+                frm = re.search(r"^From:\s*(.+)$", head, re.M)
+                sub = re.search(r"^Subject:\s*(.+)$", head, re.M)
+                date = re.search(r"^Date:\s*(.+)$", head, re.M)
+                sender = frm.group(1).strip() if frm else "?"
+                subject = sub.group(1).strip() if sub else "(no subject)"
+                try:
+                    subject = str(make_header(decode_header(subject)))
+                except Exception:
+                    pass
+                if "hrs18jan" in sender or MAILIGNORE.search(sender):
+                    continue
+                out.append({
+                    "from": sender[:70],
+                    "subject": subject[:90],
+                    "date": (date.group(1).strip() if date else "")[:40],
+                })
+    except Exception as e:
+        print(f"inbox check failed: {type(e).__name__}")
+        return []
+    return out
+
+
 def send_digest(subject, lines):
     if not GMAIL_PASS:
         print("!! no GMAIL_APP_PASSWORD — printing digest to stdout only")
@@ -343,11 +408,27 @@ def main():
     if problems:
         print("board issues: " + " | ".join(problems))
 
+    inbox = [m for m in inbox_new()
+             if MAILWATCH.search(m["from"] + " " + m["subject"])]
+
+    def mailblock():
+        if not inbox:
+            return []
+        b = ["", "=" * 46,
+             f"INBOX — {len(inbox)} unread that look like real replies:", ""]
+        for m in inbox:
+            b.append(f"- {m['subject']}")
+            b.append(f"  from: {m['from']}")
+            b.append(f"  {m['date']}")
+            b.append("")
+        b.append("Open in Gmail, or tell me here and I will draft the reply.")
+        return b
+
     if not fresh:
         send_digest(f"Job watch — nothing new ({stamp})",
                     ["No new matching roles this cycle.", "",
-                     f"Tracked {len(seen)} roles so far."])
-        print(f"no new roles ({len(seen)} tracked)")
+                     f"Tracked {len(seen)} roles so far."] + mailblock())
+        print(f"no new roles ({len(seen)} tracked), {len(inbox)} inbox match(es)")
         return 0
 
     fresh.sort(key=lambda j: j["title"])
@@ -360,9 +441,10 @@ def main():
         lines.append(f"  {j['url']}")
         lines.append("")
 
+    lines += mailblock()
     lines += ["", "—", "job-watch: automated digest, no reply."]
     send_digest(f"Job watch — {len(fresh)} new ({stamp})", lines)
-    print(f"{len(fresh)} new roles, digest sent")
+    print(f"{len(fresh)} new roles, {len(inbox)} inbox match(es), digest sent")
     return 0
 
 

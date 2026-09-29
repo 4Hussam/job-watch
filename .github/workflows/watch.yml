@@ -32,10 +32,25 @@ jobs:
           WATCH_FROM: ${{ secrets.WATCH_FROM }}
         run: python watch.py
 
-      - name: Commit seen-state
+      # Dedup state lives on its own branch so that committing it can never
+      # collide with a code push to main. main stays code-only.
+      - name: Save seen-state
         run: |
           git config user.name  "job-watch"
           git config user.email "job-watch@users.noreply.github.com"
-          git add state/seen.json
-          git diff --staged --quiet || git commit -m "watch: seen-state $(date -u +%FT%TZ)"
-          git push
+          git fetch origin seen-state --depth=1 || true
+
+          git checkout -B seen-state
+          if git rev-parse --verify origin/seen-state >/dev/null 2>&1; then
+            git read-tree -u -m origin/seen-state
+          fi
+
+          if [ -f state/seen.json ]; then
+            git add -f state/seen.json
+            if git diff --staged --quiet; then
+              echo "no state change"
+            else
+              git commit -m "watch: seen-state $(date -u +%FT%TZ)"
+            fi
+          fi
+          git push --force origin seen-state
