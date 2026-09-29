@@ -14,6 +14,7 @@ import ssl
 import sys
 import urllib.request
 import urllib.error
+import xml.etree.ElementTree as ElementTree
 from datetime import datetime, timezone, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -48,6 +49,8 @@ BLOCK = re.compile(
     r"unity|unreal|game developer|devops|sysadmin|site reliability|"
     # local-language postings are almost always geo-locked
     r"office assistant|virtual assistant|executive assistant|"
+    r"security|analyst|developer advocate|forward deployed|"
+    r"trainee|trainers?|intern|presales|solutions architect|"
     r"softwareentwickler|entwickler|entwicklerin|büro|"
     r"développeur|développeuse|desarrollador|desarrolladora|"
     r"sviluppatore|ontwikkelaar|programador|programadora)\b",
@@ -81,6 +84,8 @@ GEO_BLOCK = re.compile(
     r"florida|seattle|austin|boston|chicago|denver|washington|oregon|"
     r"colorado|arizona|georgia|virginia|carolina|pennsylvania|massachusetts|"
     r"münster|muenster|munster|bielefeld|hannover|nürnberg|nuernberg|"
+    r"münchen|muenchen|munchen|munich|garbsen|niedersachsen|"
+    r"deutschland|germany|allemagne|españa|espana|italia|"
     r"lille|lyon|marseille|toulouse|rotterdam|utrecht|eindhoven|"
     r"brno|krakow|kraków|wroclaw|wrocław|gdansk|gdańsk)\b",
     re.I,
@@ -91,13 +96,15 @@ GEO_OK = re.compile(r"\b(anywhere|worldwide|anywhere in the world|global|"
                     r"no location restriction|location[ -]?independent)\b", re.I)
 
 BOARDS = [
-    ("FindAsync", "https://findasync.com/jobs/latest"),
     ("RemoteOK",  "https://remoteok.com/api"),
     ("Remotive",  "https://remotive.com/api/remote-jobs"),
     ("Arbeitnow", "https://www.arbeitnow.com/api/job-board-api"),
     ("Jobicy",    "https://jobicy.com/api/v2/remote-jobs"),
-    ("Himalayas", "https://himalayas.app/api/jobs"),
+    ("WWR",       "https://weworkremotely.com/remote-jobs.rss"),
 ]
+
+# Feed shapes, so one scorer can be reused for JSON and RSS alike.
+RSS_BOARDS = {"WWR"}
 
 
 def fetch(url, timeout=25):
@@ -219,7 +226,7 @@ def norm(job, board):
     }
 
 
-def pull(board, url):
+def pull_json(board, url):
     out, err = [], None
     try:
         raw = fetch(url)
@@ -253,6 +260,49 @@ def pull(board, url):
         if relevance(j) >= 3:
             out.append(norm(j, board))
     return out, err
+
+
+def pull_rss(board, url):
+    """WeWorkRemotely and friends: RSS, not JSON. Map <item> onto the same dicts."""
+    out, err = [], None
+    try:
+        raw = fetch(url)
+    except Exception as e:
+        return out, f"{board}: {type(e).__name__}"
+    try:
+        root = ElementTree.fromstring(raw)
+    except ElementTree.ParseError as e:
+        return out, f"{board}: bad xml ({e})"
+
+    for item in root.iter("item"):
+        def tag(name):
+            el = item.find(name)
+            return (el.text or "").strip() if el is not None and el.text else ""
+
+        title = tag("title")
+        # WWR packs "Company: Position" into <title>.
+        company, _, position = title.partition(":")
+        if not position:
+            company, position = "", title
+        cats = [c.text.strip() for c in item.findall("category") if c.text]
+        job = {
+            "title": position.strip() or title,
+            "company": company.strip(),
+            "description": tag("description"),
+            "url": tag("link"),
+            # WWR puts region in <region> or in the category list.
+            "candidate_required_location": tag("region") or " ".join(cats),
+            "date_published": tag("pubDate"),
+        }
+        if TOO_SENIOR.search(job["title"]):
+            continue
+        if relevance(job) >= 3:
+            out.append(norm(job, board))
+    return out, err
+
+
+def pull(board, url):
+    return pull_rss(board, url) if board in RSS_BOARDS else pull_json(board, url)
 
 
 def send_digest(subject, lines):
