@@ -40,6 +40,58 @@ WANT = re.compile(
     re.I,
 )
 
+# HARD GATE. "Software Engineer" alone matches WANT for every backend role in
+# the world, which is how Go/Kubernetes jobs kept sneaking in through the tags.
+# The title itself has to name something he actually builds with.
+TITLE_MUST = re.compile(
+    r"\b(full[\s-]?stack|front[\s-]?end|frontend|back[\s-]?end|backend|"
+    r"typescript|javascript|node\.?js|nodejs|astro|react(?!\s*native)|"
+    r"vue|angular|svelte|next\.?js|nuxt|"
+    r"postgres(?:ql)?|mysql|firebase|firestore|supabase|"
+    r"rest\s*api|api\s*(?:developer|engineer|integrat)|"
+    r"web\s*(?:app|develop|design)|software\s*develop|"
+    r"mern|mean|lamp|jamstack|ui\s*engineer)\b",
+    re.I,
+)
+
+# Stacks that keep arriving via the tag list. Not a fit, so they are removed
+# outright rather than merely scored down.
+OFFSTACK = re.compile(
+    r"\b(golang|go\s*developer|kubernetes|k8s|terraform|ansible|"
+    r"devops|sre|site reliability|aws|azure|gcp|"
+    r"java\b|spring|python|django|flask|fastapi|"
+    r"swift|objective[\s-]?c|objective-c|kotlin|"
+    r"c\+\+|cpp|\.net|c#|rust|elixir|erlang|haskell|"
+    r"machine learning|data scientist|data engineering|"
+    r"android|ios\b|unity|unreal|embedded|firmware|"
+    r"salesforce|sharepoint|sap\b|qa\b|test engineer|"
+    r"data analyst|business intelligence|tableau|power\s*bi)\b",
+    re.I,
+)
+
+# Titles that say nothing about the stack, so the body has to be checked.
+GENERIC_TITLE = re.compile(
+    r"\b(software|product|design|application|web)\s+(engineer|developer)\b",
+    re.I,
+)
+
+# Evidence in the body that the role is web work he can do.
+STACK_BODY = re.compile(
+    r"(typescript|javascript|node\.?js|nodejs|astro|react|vue|next\.?js|"
+    r"nuxt|svelte|postgres(?:ql)?|mysql|firebase|firestore|supabase|"
+    r"rest\s*api|tailwind|javascript|html|css|front[\s-]?end|back[\s-]?end)",
+    re.I,
+)
+
+# If the body leans on these, it is not the web work he is after.
+NO_WEB = re.compile(
+    r"(microservices? on (?:go|golang)|service mesh|operator|"
+    r"distributed (?:compute|systems|training)|high[\s-]per?formance computing|"
+    r"hpc\b|cuda|driver development|kernel|firmware|"
+    r"real[\s-]time systems|control systems|robotics)",
+    re.I,
+)
+
 # Noise we never want in a digest.
 BLOCK = re.compile(
     r"\b(sales|marketing|recruiter|account executive|teacher|driver|"
@@ -52,6 +104,7 @@ BLOCK = re.compile(
     # local-language postings are almost always geo-locked
     r"office assistant|virtual assistant|executive assistant|"
     r"security|analyst|developer advocate|forward deployed|"
+    r"\biam\b|identity|access management|compliance|privacy|infosec|"
     r"trainee|trainers?|intern|presales|solutions architect|"
     r"softwareentwickler|entwickler|entwicklerin|büro|"
     r"développeur|développeuse|desarrollador|desarrolladora|"
@@ -153,7 +206,29 @@ def relevance(job):
     t = text_of(job)
     if not WANT.search(t):
         return 0
-    if BLOCK.search(job.get("title") or job.get("position") or ""):
+    title = job.get("title") or job.get("position") or ""
+    if BLOCK.search(title):
+        return 0
+    if TOO_SENIOR.search(title):
+        return 0
+    # The stack must be visible in the title, or proven by the body if the
+    # title is a generic "Software Engineer".
+    if not TITLE_MUST.search(title):
+        if not GENERIC_TITLE.search(title):
+            return 0
+        # Generic title: the description has to name his stack, and must not
+        # name a stack he does not have.
+        if OFFSTACK.search(t):
+            return 0
+        if not (STACK_BODY.search(t) and not NO_WEB.search(t)):
+            return 0
+    # ...and the tag list must not say it is a stack he does not have.
+    tags = job.get("tags")
+    if tags is None:
+        tags = job.get("categories") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    if OFFSTACK.search(" ".join(str(x) for x in tags)):
         return 0
 
     # Only judge location on the explicit field, not free-text noise.
