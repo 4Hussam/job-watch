@@ -64,7 +64,10 @@ jobs:
           import base64, json, os, urllib.request, urllib.error
 
           data = open("state/seen.json", "rb").read()
-          api = "https://api.github.com/repos/4Hussam/job-watch/contents/state/seen.json"
+          # NOTE: the read must target seen-state too, otherwise it 404s on
+          # main, sha stays None, and the PUT is rejected as a duplicate.
+          api = ("https://api.github.com/repos/4Hussam/job-watch/contents/"
+                 "state/seen.json?ref=seen-state")
           token = os.environ["GITHUB_TOKEN"]
           headers = {
               "Authorization": f"Bearer {token}",
@@ -89,6 +92,10 @@ jobs:
           }).encode()
 
           req = urllib.request.Request(api, data=body, headers=headers, method="PUT")
-          with urllib.request.urlopen(req) as r:
-              print("seen-state updated:", r.status)
+          try:
+              with urllib.request.urlopen(req) as r:
+                  print("seen-state updated:", r.status)
+          except urllib.error.HTTPError as e:
+              print("PUT failed:", e.code, e.read().decode()[:400])
+              raise
           PY
