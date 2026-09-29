@@ -25,6 +25,8 @@ jobs:
           python-version: "3.12"
 
       - name: Run job watch
+        # Runs for real: sends the digest and commits seen-state.
+        # Locally, test with:  python watch.py --dry-run
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}

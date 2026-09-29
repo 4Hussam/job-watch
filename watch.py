@@ -445,7 +445,12 @@ def inbox_new():
     return out
 
 
-def send_digest(subject, lines):
+def send_digest(subject, lines, dry=False):
+    if dry:
+        print("--- DRY RUN, NOT SENT ---")
+        print("Subject:", subject)
+        print("\n".join(lines))
+        return False
     if not GMAIL_PASS:
         print("!! no GMAIL_APP_PASSWORD — printing digest to stdout only")
         print("\n".join(lines))
@@ -463,6 +468,10 @@ def send_digest(subject, lines):
 
 
 def main():
+    # --dry-run prints the digest instead of mailing it, and does not touch
+    # the seen-state, so testing the filters never consumes a real cycle.
+    dry = "--dry-run" in sys.argv
+
     seen = load_seen()
     fresh, problems = [], []
 
@@ -475,7 +484,10 @@ def main():
                 seen[j["key"]] = datetime.now(timezone.utc).isoformat()
                 fresh.append(j)
 
-    save_seen(seen)
+    if dry:
+        print("DRY RUN — nothing will be sent, seen-state untouched")
+    else:
+        save_seen(seen)
 
     now = datetime.now(timezone.utc) + timedelta(hours=3)
     stamp = now.strftime("%Y-%m-%d %H:%M")
@@ -502,7 +514,7 @@ def main():
     if not fresh:
         send_digest(f"Job watch — nothing new ({stamp})",
                     ["No new matching roles this cycle.", "",
-                     f"Tracked {len(seen)} roles so far."] + mailblock())
+                     f"Tracked {len(seen)} roles so far."] + mailblock(), dry)
         print(f"no new roles ({len(seen)} tracked), {len(inbox)} inbox match(es)")
         return 0
 
@@ -518,8 +530,9 @@ def main():
 
     lines += mailblock()
     lines += ["", "—", "job-watch: automated digest, no reply."]
-    send_digest(f"Job watch — {len(fresh)} new ({stamp})", lines)
-    print(f"{len(fresh)} new roles, {len(inbox)} inbox match(es), digest sent")
+    send_digest(f"Job watch — {len(fresh)} new ({stamp})", lines, dry)
+    print(f"{len(fresh)} new roles, {len(inbox)} inbox match(es), "
+          + ("printed only" if dry else "digest sent"))
     return 0
 
 
