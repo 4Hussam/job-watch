@@ -24,8 +24,23 @@ jobs:
         with:
           python-version: "3.12"
 
+      # The dedup memory is not on main, so pull it down before running.
+      # Without this the script starts blind and re-mails everything.
+      - name: Restore seen-state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mkdir -p state
+          if git fetch origin seen-state:state/seen.json --depth=1 2>/dev/null; then
+            echo "restored seen-state ($(wc -c < state/seen.json) bytes)"
+          else
+            echo '{}' > state/seen.json
+            echo "no prior seen-state, starting fresh"
+          fi
+
       - name: Run job watch
-        # Runs for real: sends the digest and commits seen-state.
+        # Runs for real: sends the digest and saves seen-state.
         # Locally, test with:  python watch.py --dry-run
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
@@ -34,25 +49,46 @@ jobs:
           WATCH_FROM: ${{ secrets.WATCH_FROM }}
         run: python watch.py
 
-      # Dedup state lives on its own branch so that committing it can never
+      # Dedup state lives on its own branch so that saving it can never
       # collide with a code push to main. main stays code-only.
       - name: Save seen-state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name  "job-watch"
-          git config user.email "job-watch@users.noreply.github.com"
-          git fetch origin seen-state --depth=1 || true
+          set -e
 
-          git checkout -B seen-state
-          if git rev-parse --verify origin/seen-state >/dev/null 2>&1; then
-            git read-tree -u -m origin/seen-state
-          fi
+          # Written through the API rather than by checking out the branch,
+          # because checking out seen-state makes git refuse to overwrite the
+          # untracked state/seen.json that watch.py just produced.
+          python - <<'PY'
+          import base64, json, os, urllib.request, urllib.error
 
-          if [ -f state/seen.json ]; then
-            git add -f state/seen.json
-            if git diff --staged --quiet; then
-              echo "no state change"
-            else
-              git commit -m "watch: seen-state $(date -u +%FT%TZ)"
-            fi
-          fi
-          git push --force origin seen-state
+          data = open("state/seen.json", "rb").read()
+          api = "https://api.github.com/repos/4Hussam/job-watch/contents/state/seen.json"
+          token = os.environ["GITHUB_TOKEN"]
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "job-watch",
+          }
+
+          sha = None
+          req = urllib.request.Request(api, headers=headers)
+          try:
+              with urllib.request.urlopen(req) as r:
+                  sha = json.load(r).get("sha")
+          except urllib.error.HTTPError as e:
+              if e.code != 404:
+                  raise
+
+          body = json.dumps({
+              "message": "watch: seen-state",
+              "content": base64.b64encode(data).decode(),
+              "branch": "seen-state",
+              **({"sha": sha} if sha else {}),
+          }).encode()
+
+          req = urllib.request.Request(api, data=body, headers=headers, method="PUT")
+          with urllib.request.urlopen(req) as r:
+              print("seen-state updated:", r.status)
+          PY
