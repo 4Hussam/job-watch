@@ -61,8 +61,8 @@ OFFSTACK = re.compile(
     r"devops|sre|site reliability|aws|azure|gcp|"
     r"java\b|spring|python|django|flask|fastapi|"
     r"swift|objective[\s-]?c|objective-c|kotlin|"
-    r"c\+\+|cpp|\.net|c#|rust|elixir|erlang|haskell|"
-    r"machine learning|data scientist|data engineering|"
+    r"c\+\+|cpp|\.net|c#|rust|elixir|erlang|haskell|solidity|web3|"
+    r"angular|vue\.?js|machine learning|data scientist|data engineering|"
     r"android|ios\b|unity|unreal|embedded|firmware|"
     r"salesforce|sharepoint|sap\b|qa\b|test engineer|"
     r"data analyst|business intelligence|tableau|power\s*bi)\b",
@@ -142,9 +142,23 @@ GEO_BLOCK = re.compile(
     r"münchen|muenchen|munchen|munich|garbsen|niedersachsen|"
     r"deutschland|germany|allemagne|españa|espana|italia|"
     r"lille|lyon|marseille|toulouse|rotterdam|utrecht|eindhoven|"
-    r"brno|krakow|kraków|wroclaw|wrocław|gdansk|gdańsk)\b",
+    r"brno|krakow|kraków|wroclaw|wrocław|gdansk|gdańsk|"
+    # APAC: hiring there means a local work right he does not have
+    r"singapore|malaysia|kuala lumpur|hong kong|thailand|bangkok|vietnam|"
+    r"philippines|manila|indonesia|jakarta|taiwan|taipei|india|mumbai|"
+    r"bengaluru|bangalore|hyderabad|delhi|chennai|pakistan|karachi|lahore|"
+    r"dubai|uae|abu dhabi|qatar|saudi|riyadh|kuwait|bahrain|oman|israel|"
+    r"tel aviv|jerusalem|haifa|"
+    # Region words: "Remote - Europe" excludes him as surely as a country name
+    r"europe|emea|americas?|north america|latam|latin america|"
+    r"apac|asia pacific|asia-pacific|anz)\b",
     re.I,
 )
+
+# Titles often carry the country as a suffix ("Frontend Engineer | Singapore")
+# while the structured location field stays empty. Check those too.
+GEO_TITLE = re.compile(r"\|\s*[A-Z][A-Za-z .]{2,30}\s*$|\(([A-Z][A-Za-z .]{2,30})\)",
+                       re.M)
 
 # ...unless the posting explicitly says it is open worldwide.
 GEO_OK = re.compile(r"\b(anywhere|worldwide|anywhere in the world|global|"
@@ -211,6 +225,10 @@ def relevance(job):
         return 0
     if TOO_SENIOR.search(title):
         return 0
+    # A stack he does not have named in the title itself is a dead end, even
+    # when the title also advertises one he does have ("Web3 (Rust/TypeScript)").
+    if OFFSTACK.search(title):
+        return 0
     # The stack must be visible in the title, or proven by the body if the
     # title is a generic "Software Engineer".
     if not TITLE_MUST.search(title):
@@ -237,6 +255,13 @@ def relevance(job):
                     "region", "country"))
     if loc.strip() and GEO_BLOCK.search(loc) and not GEO_OK.search(loc):
         return 0
+
+    # A country in the title ("Frontend Engineer | Singapore") is geo-locked
+    # even when the structured location field is empty.
+    if not GEO_OK.search(t):
+        suffix = GEO_TITLE.search(title)
+        if suffix and GEO_BLOCK.search(suffix.group(0)):
+            return 0
 
     score = 2
     if GEO_OK.search(t) or GEO_OK.search(loc):
