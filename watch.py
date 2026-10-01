@@ -111,7 +111,7 @@ BLOCK = re.compile(
     # which he cannot have. These leak past the city list because the city
     # appears only in the feed's URL slug, not in any structured field.
     r"working student|werkstudent\w*|praktikant\w*|ausbildung|duales studium|"
-    r"\(\s*m/w/[dx]\s*\)|\(\s*m/f/[dx]\s*\)|\(\s*w/m/d\s*\)|projektmanagement|"
+    r"projektmanagement|"
     r"softwareentwickler|entwickler|entwicklerin|büro|"
     r"développeur|développeuse|desarrollador|desarrolladora|"
     r"sviluppatore|ontwikkelaar|programador|programadora)\b",
@@ -120,6 +120,16 @@ BLOCK = re.compile(
 
 # He is honest about being mid-level. Filter out the roles he would be
 # filtered out of, so his limited attention goes where he can actually win.
+# Its own regex on purpose. BLOCK ends with a \b, which can only be satisfied by
+# an alternative that finishes on a word character, so a marker ending in ")"
+# placed inside that alternation silently never matches. This stays separate.
+GERMAN_MARKER = re.compile(
+    r"\(\s*(?:m|w|f)\s*/\s*(?:w|m|f)\s*/\s*[dx]\b"   # (m/w/d) (m/w/x) (w/m/d)
+    r"|\bhybrid\s+(?:role|modell|model)\b"
+    r"|\bvor\s+ort\b|\bam\s+standort\b",             # German boilerplate
+    re.I,
+)
+
 TOO_SENIOR = re.compile(
     r"\b(senior|sr\.?|lead|principal|staff|head of|director|architect|"
     r"vp|chief|iii|manager)\b",
@@ -231,6 +241,8 @@ def relevance(job):
     title = job.get("title") or job.get("position") or ""
     if BLOCK.search(title):
         return 0
+    if GERMAN_MARKER.search(title):
+        return 0
     if TOO_SENIOR.search(title):
         return 0
     # A stack he does not have named in the title itself is a dead end, even
@@ -262,6 +274,13 @@ def relevance(job):
                    ("candidate_required_location", "location", "job_type",
                     "region", "country"))
     if loc.strip() and GEO_BLOCK.search(loc) and not GEO_OK.search(loc):
+        return 0
+
+    # No structured location at all is its own signal: board feeds routinely
+    # put the town in the link slug and nowhere else, so the check above has
+    # nothing to look at. Only trust the body when the structured field is
+    # missing -- if it says "Remote", that answer wins.
+    if not loc.strip() and not GEO_OK.search(t) and GEO_BLOCK.search(t):
         return 0
 
     # A country in the title ("Frontend Engineer | Singapore") is geo-locked

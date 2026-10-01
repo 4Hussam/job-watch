@@ -39,6 +39,11 @@ jobs:
             echo "no prior seen-state, starting fresh"
           fi
 
+      - name: Test filters
+        # Runs first and sends nothing. A filter change that would let a
+        # geo-locked role through fails here instead of reaching the digest.
+        run: python -m unittest discover -s tests -v
+
       - name: Run job watch
         # Runs for real: sends the digest and saves seen-state.
         # Locally, test with:  python watch.py --dry-run
