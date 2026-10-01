@@ -106,6 +106,12 @@ BLOCK = re.compile(
     r"security|analyst|developer advocate|forward deployed|"
     r"\biam\b|identity|access management|compliance|privacy|infosec|"
     r"trainee|trainers?|intern|presales|solutions architect|"
+    # German/Austrian/Swiss local postings. "(m/w/d)" is a giveaway on its own,
+    # and Werkstudent/Praktikant roles require enrolment at a local university,
+    # which he cannot have. These leak past the city list because the city
+    # appears only in the feed's URL slug, not in any structured field.
+    r"working student|werkstudent\w*|praktikant\w*|ausbildung|duales studium|"
+    r"\(\s*m/w/[dx]\s*\)|\(\s*m/f/[dx]\s*\)|\(\s*w/m/d\s*\)|projektmanagement|"
     r"softwareentwickler|entwickler|entwicklerin|büro|"
     r"développeur|développeuse|desarrollador|desarrolladora|"
     r"sviluppatore|ontwikkelaar|programador|programadora)\b",
@@ -139,6 +145,8 @@ GEO_BLOCK = re.compile(
     r"florida|seattle|austin|boston|chicago|denver|washington|oregon|"
     r"colorado|arizona|georgia|virginia|carolina|pennsylvania|massachusetts|"
     r"münster|muenster|munster|bielefeld|hannover|nürnberg|nuernberg|"
+    r"grünwald|gruenwald|grunwald|stuttgart|köln|koeln|cologne|dresden|leipzig|"
+    r"bremen|erfurt|potsdam|rostock|kiel|mainz|wiesbaden|ulm|reutlingen|esslingen|"
     r"münchen|muenchen|munchen|munich|garbsen|niedersachsen|"
     r"deutschland|germany|allemagne|españa|espana|italia|"
     r"lille|lyon|marseille|toulouse|rotterdam|utrecht|eindhoven|"
